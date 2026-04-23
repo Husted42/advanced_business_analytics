@@ -6,6 +6,7 @@ import re
 from collections import defaultdict
 
 import pandas as pd
+import matplotlib.pyplot as plt
 
 try:
     from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
@@ -123,6 +124,51 @@ def print_top_sentiment_words(
         print(neg_words.to_string(index=False))
 
 
+def save_sentiment_plot(df: pd.DataFrame, months: int, output_path: Path) -> None:
+    if months <= 0:
+        raise ValueError("months must be >= 1")
+
+    daily = df.sort_values("post_date").copy()
+    max_date = daily["post_date"].max()
+    cutoff = max_date - pd.DateOffset(months=months)
+    window = daily[daily["post_date"] >= cutoff].copy()
+
+    if window.empty:
+        print("\nNo rows found in requested plot window; skipping plot generation.")
+        return
+
+    window["sentiment_roll7"] = window["sentiment_mean"].rolling(7, min_periods=1).mean()
+
+    fig, ax = plt.subplots(figsize=(12, 6))
+    ax.plot(
+        window["post_date"],
+        window["sentiment_mean"],
+        label="Daily sentiment_mean",
+        linewidth=1.6,
+        alpha=0.65,
+    )
+    ax.plot(
+        window["post_date"],
+        window["sentiment_roll7"],
+        label="7-day rolling mean",
+        linewidth=2.4,
+    )
+
+    ax.axhline(0, color="grey", linestyle="--", linewidth=1)
+    ax.set_title(f"Trump daily sentiment — last {months} months")
+    ax.set_xlabel("Date")
+    ax.set_ylabel("Sentiment (compound)")
+    ax.legend()
+    ax.grid(alpha=0.25)
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=180)
+    plt.close(fig)
+
+    print(f"\nSaved sentiment plot to: {output_path}")
+
+
 def print_report(df: pd.DataFrame, posts_df: pd.DataFrame, top_days: int, top_words: int) -> None:
     print("=" * 70)
     print("NLP Sentiment Audit")
@@ -197,11 +243,24 @@ def main() -> None:
         default=15,
         help="How many words to print for each side.",
     )
+    parser.add_argument(
+        "--plot-last-months",
+        type=int,
+        default=2,
+        help="How many months to include in the sentiment plot (default: 2).",
+    )
+    parser.add_argument(
+        "--plot-output",
+        type=Path,
+        default=Path(__file__).resolve().parent / "sentiment_last_2_months.png",
+        help="Path for saved sentiment plot PNG.",
+    )
     args = parser.parse_args()
 
     df = load_dataset(args.csv)
     posts_df = load_posts(args.posts_csv)
     print_report(df, posts_df, top_days=args.top_days, top_words=args.top_words)
+    save_sentiment_plot(df, months=args.plot_last_months, output_path=args.plot_output)
 
 
 if __name__ == "__main__":
