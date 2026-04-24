@@ -19,6 +19,8 @@ except Exception as exc:
 
 DEFAULT_DATASET = Path(__file__).resolve().parents[1] / "data" / "trump_daily_features.csv"
 DEFAULT_POSTS = Path(__file__).resolve().parents[1] / "data" / "trump_clean_posts.csv"
+DEFAULT_START_DATE = "2025-11-14"
+DEFAULT_END_DATE = "2026-04-10"
 SENTIMENT_COLS = ["sentiment_mean", "sentiment_std", "sentiment_pct_negative"]
 TOKEN_PATTERN = re.compile(r"[a-z']+")
 
@@ -40,6 +42,31 @@ def load_posts(csv_path: Path) -> pd.DataFrame:
     if missing:
         raise ValueError(f"Missing expected post columns in {csv_path.name}: {missing}")
     return posts
+
+
+def filter_date_range(
+    daily_df: pd.DataFrame,
+    posts_df: pd.DataFrame,
+    start_date: pd.Timestamp,
+    end_date: pd.Timestamp,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    if end_date < start_date:
+        raise ValueError("end_date must be on or after start_date")
+
+    daily_f = daily_df[
+        (daily_df["post_date"] >= start_date) & (daily_df["post_date"] <= end_date)
+    ].copy()
+    posts_f = posts_df[
+        (posts_df["post_date"] >= start_date) & (posts_df["post_date"] <= end_date)
+    ].copy()
+
+    if daily_f.empty:
+        raise ValueError(
+            "No daily rows found inside selected date range "
+            f"({start_date.date()} -> {end_date.date()})."
+        )
+
+    return daily_f, posts_f
 
 
 def aggregate_sentiment_words(texts: pd.Series, positive: bool) -> pd.DataFrame:
@@ -124,19 +151,8 @@ def print_top_sentiment_words(
         print(neg_words.to_string(index=False))
 
 
-def save_sentiment_plot(df: pd.DataFrame, months: int, output_path: Path) -> None:
-    if months <= 0:
-        raise ValueError("months must be >= 1")
-
-    daily = df.sort_values("post_date").copy()
-    max_date = daily["post_date"].max()
-    cutoff = max_date - pd.DateOffset(months=months)
-    window = daily[daily["post_date"] >= cutoff].copy()
-
-    if window.empty:
-        print("\nNo rows found in requested plot window; skipping plot generation.")
-        return
-
+def save_sentiment_plot(df: pd.DataFrame, output_path: Path) -> None:
+    window = df.sort_values("post_date").copy()
     window["sentiment_roll7"] = window["sentiment_mean"].rolling(7, min_periods=1).mean()
 
     fig, ax = plt.subplots(figsize=(12, 6))
@@ -155,7 +171,10 @@ def save_sentiment_plot(df: pd.DataFrame, months: int, output_path: Path) -> Non
     )
 
     ax.axhline(0, color="grey", linestyle="--", linewidth=1)
-    ax.set_title(f"Trump daily sentiment — last {months} months")
+    ax.set_title(
+        "Trump daily sentiment — "
+        f"{window['post_date'].min().date()} to {window['post_date'].max().date()}"
+    )
     ax.set_xlabel("Date")
     ax.set_ylabel("Sentiment (compound)")
     ax.legend()
@@ -167,6 +186,16 @@ def save_sentiment_plot(df: pd.DataFrame, months: int, output_path: Path) -> Non
     plt.close(fig)
 
     print(f"\nSaved sentiment plot to: {output_path}")
+
+
+def save_sentiment_csv(df: pd.DataFrame, output_path: Path) -> None:
+    export_df = df.sort_values("post_date")[["post_date", "sentiment_mean"]].copy()
+    export_df["sentiment_roll7"] = export_df["sentiment_mean"].rolling(7, min_periods=1).mean()
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    export_df.to_csv(output_path, index=False)
+
+    print(f"Saved sentiment CSV to : {output_path}")
 
 
 def print_report(df: pd.DataFrame, posts_df: pd.DataFrame, top_days: int, top_words: int) -> None:
@@ -244,23 +273,40 @@ def main() -> None:
         help="How many words to print for each side.",
     )
     parser.add_argument(
-        "--plot-last-months",
-        type=int,
-        default=2,
-        help="How many months to include in the sentiment plot (default: 2).",
+        "--start-date",
+        type=str,
+        default=DEFAULT_START_DATE,
+        help="Inclusive start date for analysis window (YYYY-MM-DD).",
+    )
+    parser.add_argument(
+        "--end-date",
+        type=str,
+        default=DEFAULT_END_DATE,
+        help="Inclusive end date for analysis window (YYYY-MM-DD).",
     )
     parser.add_argument(
         "--plot-output",
         type=Path,
-        default=Path(__file__).resolve().parent / "sentiment_last_2_months.png",
+        default=Path(__file__).resolve().parent / "sentiment_2025-11-14_to_2026-04-10.png",
         help="Path for saved sentiment plot PNG.",
+    )
+    parser.add_argument(
+        "--sentiment-csv-output",
+        type=Path,
+        default=Path(__file__).resolve().parent / "sentiment_2025-11-14_to_2026-04-10.csv",
+        help="Path for saved sentiment results CSV.",
     )
     args = parser.parse_args()
 
     df = load_dataset(args.csv)
     posts_df = load_posts(args.posts_csv)
+    start_date = pd.Timestamp(args.start_date)
+    end_date = pd.Timestamp(args.end_date)
+
+    df, posts_df = filter_date_range(df, posts_df, start_date=start_date, end_date=end_date)
     print_report(df, posts_df, top_days=args.top_days, top_words=args.top_words)
-    save_sentiment_plot(df, months=args.plot_last_months, output_path=args.plot_output)
+    save_sentiment_csv(df, output_path=args.sentiment_csv_output)
+    save_sentiment_plot(df, output_path=args.plot_output)
 
 
 if __name__ == "__main__":
