@@ -25,6 +25,12 @@ df = cpi.merge(fed, on="date", how="inner") \
         .merge(sent, on="date", how="inner") \
         .merge(unemp, on="date", how="inner")
 
+start_date = "2016-01-01"
+end_date = "2021-01-20"
+
+df = df[(df["date"] >= start_date) & (df["date"] <= end_date)]
+df = df.sort_values("date") 
+
 # Create features
 df["inflation"] = df["cpi"].pct_change() * 100
 df["interest_rate_change"] = df["interest_rate"].diff()
