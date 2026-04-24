@@ -18,35 +18,72 @@ except Exception as exc:
 
 
 DEFAULT_DATASET = Path(__file__).resolve().parents[1] / "data" / "trump_daily_features.csv"
-DEFAULT_POSTS = Path(__file__).resolve().parents[1] / "data" / "trump_clean_posts.csv"
+DEFAULT_GUARDIAN = Path(__file__).resolve().parent / "guardian_trump_articles.csv"
+DEFAULT_NYT = Path(__file__).resolve().parent / "nyt_trump_last_6_months.csv"
 DEFAULT_START_DATE = "2025-11-14"
 DEFAULT_END_DATE = "2026-04-10"
-SENTIMENT_COLS = ["sentiment_mean", "sentiment_std", "sentiment_pct_negative"]
+SENTIMENT_COLS = ["sentiment_mean", "sentiment_std", "sentiment_pct_negative", "n_articles"]
 TOKEN_PATTERN = re.compile(r"[a-z']+")
 
 
-def load_dataset(csv_path: Path) -> pd.DataFrame:
-    df = pd.read_csv(csv_path, parse_dates=["post_date"])
-    missing = [c for c in SENTIMENT_COLS if c not in df.columns]
+def load_news_source(csv_path: Path, source_name: str) -> pd.DataFrame:
+    df = pd.read_csv(csv_path)
+    required = ["date", "title", "content"]
+    missing = [c for c in required if c not in df.columns]
     if missing:
         raise ValueError(
-            f"Missing expected sentiment columns in {csv_path.name}: {missing}"
+            f"Missing expected columns in {csv_path.name}: {missing}"
         )
+
+    df = df[required].copy()
+    df["source"] = source_name
+    df["date"] = pd.to_datetime(df["date"], errors="coerce", utc=True).dt.tz_convert(None).dt.normalize()
+    df = df.dropna(subset=["date"])
+
     return df
 
 
-def load_posts(csv_path: Path) -> pd.DataFrame:
-    posts = pd.read_csv(csv_path, parse_dates=["post_date"])
-    required = ["post_date", "text"]
-    missing = [c for c in required if c not in posts.columns]
-    if missing:
-        raise ValueError(f"Missing expected post columns in {csv_path.name}: {missing}")
-    return posts
+def load_news_data(guardian_path: Path, nyt_path: Path) -> pd.DataFrame:
+    guardian = load_news_source(guardian_path, "guardian")
+    nyt = load_news_source(nyt_path, "nyt")
+    return pd.concat([guardian, nyt], ignore_index=True)
+
+
+def compute_daily_sentiment(news_df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    analyzer = SentimentIntensityAnalyzer()
+
+    text = (
+        news_df["title"].fillna("").astype(str).str.strip()
+        + ". "
+        + news_df["content"].fillna("").astype(str).str.strip()
+    )
+
+    article_df = news_df.copy()
+    article_df["text"] = text
+    article_df["sentiment_article"] = article_df["text"].apply(
+        lambda x: analyzer.polarity_scores(x)["compound"] if x else 0.0
+    )
+
+    daily_df = (
+        article_df.groupby("date", as_index=False)
+        .agg(
+            sentiment_mean=("sentiment_article", "mean"),
+            sentiment_std=("sentiment_article", "std"),
+            sentiment_pct_negative=("sentiment_article", lambda x: (x < -0.5).mean()),
+            n_articles=("sentiment_article", "size"),
+        )
+        .rename(columns={"date": "post_date"})
+        .sort_values("post_date")
+        .reset_index(drop=True)
+    )
+    daily_df["sentiment_std"] = daily_df["sentiment_std"].fillna(0.0)
+
+    return daily_df, article_df
 
 
 def filter_date_range(
     daily_df: pd.DataFrame,
-    posts_df: pd.DataFrame,
+    article_df: pd.DataFrame,
     start_date: pd.Timestamp,
     end_date: pd.Timestamp,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -56,8 +93,8 @@ def filter_date_range(
     daily_f = daily_df[
         (daily_df["post_date"] >= start_date) & (daily_df["post_date"] <= end_date)
     ].copy()
-    posts_f = posts_df[
-        (posts_df["post_date"] >= start_date) & (posts_df["post_date"] <= end_date)
+    posts_f = article_df[
+        (article_df["date"] >= start_date) & (article_df["date"] <= end_date)
     ].copy()
 
     if daily_f.empty:
@@ -111,29 +148,29 @@ def aggregate_sentiment_words(texts: pd.Series, positive: bool) -> pd.DataFrame:
 
 def print_top_sentiment_words(
     daily_df: pd.DataFrame,
-    posts_df: pd.DataFrame,
+    article_df: pd.DataFrame,
     top_days: int,
     top_words: int,
 ) -> None:
     pos_days = daily_df.nlargest(top_days, "sentiment_mean")["post_date"]
     neg_days = daily_df.nsmallest(top_days, "sentiment_mean")["post_date"]
 
-    pos_texts = posts_df[posts_df["post_date"].isin(pos_days)]["text"]
-    neg_texts = posts_df[posts_df["post_date"].isin(neg_days)]["text"]
+    pos_texts = article_df[article_df["date"].isin(pos_days)]["text"]
+    neg_texts = article_df[article_df["date"].isin(neg_days)]["text"]
 
     pos_words = aggregate_sentiment_words(pos_texts, positive=True).head(top_words)
     neg_words = aggregate_sentiment_words(neg_texts, positive=False).head(top_words)
 
     print("\nTop positive days included:")
     print(
-        daily_df[daily_df["post_date"].isin(pos_days)][["post_date", "sentiment_mean", "post_count"]]
+        daily_df[daily_df["post_date"].isin(pos_days)][["post_date", "sentiment_mean", "n_articles"]]
         .sort_values("sentiment_mean", ascending=False)
         .to_string(index=False)
     )
 
     print("\nTop negative days included:")
     print(
-        daily_df[daily_df["post_date"].isin(neg_days)][["post_date", "sentiment_mean", "post_count"]]
+        daily_df[daily_df["post_date"].isin(neg_days)][["post_date", "sentiment_mean", "n_articles"]]
         .sort_values("sentiment_mean", ascending=True)
         .to_string(index=False)
     )
@@ -172,7 +209,7 @@ def save_sentiment_plot(df: pd.DataFrame, output_path: Path) -> None:
 
     ax.axhline(0, color="grey", linestyle="--", linewidth=1)
     ax.set_title(
-        "Trump daily sentiment — "
+        "News daily sentiment — "
         f"{window['post_date'].min().date()} to {window['post_date'].max().date()}"
     )
     ax.set_xlabel("Date")
@@ -198,7 +235,7 @@ def save_sentiment_csv(df: pd.DataFrame, output_path: Path) -> None:
     print(f"Saved sentiment CSV to : {output_path}")
 
 
-def print_report(df: pd.DataFrame, posts_df: pd.DataFrame, top_days: int, top_words: int) -> None:
+def print_report(df: pd.DataFrame, article_df: pd.DataFrame, top_days: int, top_words: int) -> None:
     print("=" * 70)
     print("NLP Sentiment Audit")
     print("=" * 70)
@@ -214,8 +251,8 @@ def print_report(df: pd.DataFrame, posts_df: pd.DataFrame, top_days: int, top_wo
     print("\nSummary statistics:")
     print(summary.round(4))
 
-    top_pos = df.nlargest(5, "sentiment_mean")[["post_date", "post_count", "sentiment_mean"]]
-    top_neg = df.nsmallest(5, "sentiment_mean")[["post_date", "post_count", "sentiment_mean"]]
+    top_pos = df.nlargest(5, "sentiment_mean")[["post_date", "n_articles", "sentiment_mean"]]
+    top_neg = df.nsmallest(5, "sentiment_mean")[["post_date", "n_articles", "sentiment_mean"]]
 
     print("\nTop 5 most positive days (sentiment_mean):")
     print(top_pos.to_string(index=False))
@@ -224,12 +261,12 @@ def print_report(df: pd.DataFrame, posts_df: pd.DataFrame, top_days: int, top_wo
     print(top_neg.to_string(index=False))
 
     corr_with_volume = (
-        df[["post_count", *SENTIMENT_COLS]]
+        df[["n_articles", "sentiment_mean", "sentiment_std", "sentiment_pct_negative"]]
         .corr(numeric_only=True)
-        .loc["post_count", SENTIMENT_COLS]
+        .loc["n_articles", ["sentiment_mean", "sentiment_std", "sentiment_pct_negative"]]
         .round(4)
     )
-    print("\nCorrelation with post_count:")
+    print("\nCorrelation with n_articles:")
     print(corr_with_volume)
 
     rolling = df.sort_values("post_date").set_index("post_date")["sentiment_mean"].rolling(7).mean()
@@ -241,24 +278,24 @@ def print_report(df: pd.DataFrame, posts_df: pd.DataFrame, top_days: int, top_wo
     print("\n" + "=" * 70)
     print("Word-level sentiment drivers")
     print("=" * 70)
-    print_top_sentiment_words(df, posts_df, top_days=top_days, top_words=top_words)
+    print_top_sentiment_words(df, article_df, top_days=top_days, top_words=top_words)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Inspect NLP sentiment features from trump_daily_features.csv"
+        description="Inspect sentiment features from Guardian + NYT news datasets"
     )
     parser.add_argument(
-        "--csv",
+        "--guardian-csv",
         type=Path,
-        default=DEFAULT_DATASET,
-        help="Path to dataset (default: ../data/trump_daily_features.csv)",
+        default=DEFAULT_GUARDIAN,
+        help="Path to Guardian dataset (default: Newsdata/guardian_trump_articles.csv)",
     )
     parser.add_argument(
-        "--posts-csv",
+        "--nyt-csv",
         type=Path,
-        default=DEFAULT_POSTS,
-        help="Path to post-level dataset (default: ../data/trump_clean_posts.csv)",
+        default=DEFAULT_NYT,
+        help="Path to NYT dataset (default: Newsdata/nyt_trump_last_6_months.csv)",
     )
     parser.add_argument(
         "--top-days",
@@ -287,7 +324,7 @@ def main() -> None:
     parser.add_argument(
         "--plot-output",
         type=Path,
-        default=Path(__file__).resolve().parent / "sentiment_2025-11-14_to_2026-04-10.png",
+        default=Path(__file__).resolve().parent / "news_sentiment_2025-11-14_to_2026-04-10.png",
         help="Path for saved sentiment plot PNG.",
     )
     parser.add_argument(
@@ -298,13 +335,13 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    df = load_dataset(args.csv)
-    posts_df = load_posts(args.posts_csv)
+    news_df = load_news_data(args.guardian_csv, args.nyt_csv)
+    df, article_df = compute_daily_sentiment(news_df)
     start_date = pd.Timestamp(args.start_date)
     end_date = pd.Timestamp(args.end_date)
 
-    df, posts_df = filter_date_range(df, posts_df, start_date=start_date, end_date=end_date)
-    print_report(df, posts_df, top_days=args.top_days, top_words=args.top_words)
+    df, article_df = filter_date_range(df, article_df, start_date=start_date, end_date=end_date)
+    print_report(df, article_df, top_days=args.top_days, top_words=args.top_words)
     save_sentiment_csv(df, output_path=args.sentiment_csv_output)
     save_sentiment_plot(df, output_path=args.plot_output)
 
