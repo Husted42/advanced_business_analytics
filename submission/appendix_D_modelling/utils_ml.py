@@ -3,6 +3,7 @@ import pandas as pd
 
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
+from scipy import stats
 import seaborn as sns
 
 import statsmodels.api as sm
@@ -25,6 +26,7 @@ from sklearn.inspection import PartialDependenceDisplay
 
 from sklearn.model_selection import ParameterGrid
 import shap
+from matplotlib.ticker import ScalarFormatter
 
 
 
@@ -430,3 +432,235 @@ def encode_for_parallel_plot(df):
         print(col, mapping)
 
     return df
+
+
+def diagnose_predictions(y_true, y_pred):
+    y_true = np.ravel(y_true)
+    y_pred = np.ravel(y_pred)
+    residuals = y_true - y_pred
+
+    fig, ax = plt.subplots(1, 4, figsize=(22, 6))
+
+    ax[0].scatter(y_pred, residuals, alpha=0.6)
+    ax[0].axhline(0, linestyle="--")
+    ax[0].set_title("Residuals vs Predicted")
+    ax[0].set_xlabel("Predicted")
+    ax[0].set_ylabel("Residuals")
+
+    ax[1].hist(residuals, bins=30)
+    ax[1].set_title("Residual Distribution")
+    ax[1].set_xlabel("Residuals")
+
+    stats.probplot(residuals, dist="norm", plot=ax[2])
+    ax[2].set_title("Q-Q Plot")
+
+    ax[3].scatter(y_true, y_pred, alpha=0.6)
+    ax[3].plot([y_true.min(), y_true.max()], [y_true.min(), y_true.max()], "--")
+    ax[3].set_title(f"Actual vs Predicted\nR² = {r2_score(y_true, y_pred):.3f}")
+    ax[3].set_xlabel("Actual")
+    ax[3].set_ylabel("Predicted")
+
+    plt.tight_layout()
+    plt.show()
+
+from matplotlib.ticker import ScalarFormatter
+import matplotlib.pyplot as plt
+from sklearn.metrics import r2_score
+import numpy as np
+
+def plot_actual_vs_predicted(
+    model,
+    X_train, Y_train,
+    X_val, Y_val,
+    X_test, Y_test,
+    target_name
+):
+    # Get column index
+    target_idx = Y_train.columns.get_loc(target_name)
+
+    # Predict only selected target
+    train_pred = model.predict(X_train)[:, target_idx]
+    val_pred   = model.predict(X_val)[:, target_idx]
+    test_pred  = model.predict(X_test)[:, target_idx]
+
+    # Actuals for selected target
+    y_train = Y_train[target_name].values
+    y_val   = Y_val[target_name].values
+    y_test  = Y_test[target_name].values
+
+    print(f"{target_name} Train R²:", r2_score(y_train, train_pred))
+    print(f"{target_name} Val R²:", r2_score(y_val, val_pred))
+    print(f"{target_name} Test R²:", r2_score(y_test, test_pred))
+
+    y_all = np.concatenate([y_train, y_val, y_test])
+
+    train_idx = np.arange(len(y_train))
+    val_idx   = np.arange(len(y_train), len(y_train) + len(y_val))
+    test_idx  = np.arange(len(y_train) + len(y_val), len(y_all))
+
+    fig, ax = plt.subplots(figsize=(18, 6))
+
+    # Actual values
+    ax.scatter(np.arange(len(y_all)), y_all, alpha=0.5, label="Actual")
+
+    # Predictions
+    ax.plot(train_idx, train_pred, color="blue", linewidth=2, label="Train Prediction")
+    ax.plot(val_idx, val_pred, color="gold", linewidth=2, label="Validation Prediction")
+    ax.plot(test_idx, test_pred, color="red", linewidth=2, label="Test Prediction")
+
+    # Split markers
+    ax.axvline(len(y_train), linestyle="--", alpha=0.7)
+    ax.axvline(len(y_train) + len(y_val), linestyle="--", alpha=0.7)
+
+    ax.yaxis.set_major_formatter(ScalarFormatter())
+    ax.ticklabel_format(style="plain", axis="y")
+    ax.set_ylim(0, max(y_all.max(), train_pred.max(), val_pred.max(), test_pred.max()) * 1.1)
+
+    ax.set_xlabel("Sample Index")
+    ax.set_ylabel(target_name)
+    ax.set_title(f"Actual vs Predicted — {target_name}")
+    ax.legend()
+
+    plt.tight_layout()
+    plt.show()
+
+def plot_actual_vs_predicted_with_sentiment(
+    model,
+    X_val, Y_val,
+    X_test, Y_test,
+    val, test,
+    target_name
+):
+    target_idx = Y_val.columns.get_loc(target_name)
+
+    val_pred  = model.predict(X_val)[:, target_idx]
+    test_pred = model.predict(X_test)[:, target_idx]
+
+    y_val  = Y_val[target_name].values
+    y_test = Y_test[target_name].values
+
+    print(f"{target_name} Val R²:", r2_score(y_val, val_pred))
+    print(f"{target_name} Test R²:", r2_score(y_test, test_pred))
+
+    y_all = np.concatenate([y_val, y_test])
+    pred_all = np.concatenate([val_pred, test_pred])
+
+    df_plot = pd.concat([val, test], axis=0).reset_index(drop=True)
+
+    x = np.arange(len(y_all))
+
+    val_idx  = np.arange(len(y_val))
+    test_idx = np.arange(len(y_val), len(y_all))
+
+    fig, ax = plt.subplots(figsize=(18, 6))
+
+    # Actual values
+    ax.scatter(x, y_all, alpha=0.5, label="Actual")
+
+    # Predictions
+    ax.plot(val_idx, val_pred, color="gold", linewidth=2, label="Validation Prediction")
+    ax.plot(test_idx, test_pred, color="red", linewidth=2, label="Test Prediction")
+
+    # Split marker between val and test
+    ax.axvline(len(y_val), linestyle="--", alpha=0.7)
+
+    ax.yaxis.set_major_formatter(ScalarFormatter())
+    ax.ticklabel_format(style="plain", axis="y")
+    ax.set_ylim(0, max(y_all.max(), pred_all.max()) * 1.1)
+
+    ax.set_xlabel("Sample Index")
+    ax.set_ylabel(target_name)
+    ax.set_title(f"Actual vs Predicted — {target_name} (Validation + Test)")
+
+    # Secondary axis for sentiment
+    ax2 = ax.twinx()
+    ax2.plot(
+        x,
+        df_plot["trump_sentiment_pct_negative"].values,
+        color="purple",
+        linestyle=":",
+        linewidth=2,
+        label="Trump Negative Sentiment %"
+    )
+    ax2.set_ylabel("Trump Negative Sentiment %")
+
+    lines1, labels1 = ax.get_legend_handles_labels()
+    lines2, labels2 = ax2.get_legend_handles_labels()
+    ax.legend(lines1 + lines2, labels1 + labels2, loc="upper left")
+
+    plt.tight_layout()
+    plt.show()
+
+def plot_actual_vs_predicted_with_topics(
+    model,
+    X_val, Y_val,
+    X_test, Y_test,
+    val, test,
+    target_name
+):
+    target_idx = Y_val.columns.get_loc(target_name)
+
+    val_pred  = model.predict(X_val)[:, target_idx]
+    test_pred = model.predict(X_test)[:, target_idx]
+
+    y_val  = Y_val[target_name].values
+    y_test = Y_test[target_name].values
+
+    print(f"{target_name} Val R²:", r2_score(y_val, val_pred))
+    print(f"{target_name} Test R²:", r2_score(y_test, test_pred))
+
+    y_all = np.concatenate([y_val, y_test])
+    pred_all = np.concatenate([val_pred, test_pred])
+    df_plot = pd.concat([val, test], axis=0).reset_index(drop=True)
+
+    x = np.arange(len(y_all))
+    val_idx  = np.arange(len(y_val))
+    test_idx = np.arange(len(y_val), len(y_all))
+
+    fig, ax = plt.subplots(figsize=(18, 6))
+
+    ax.scatter(x, y_all, alpha=0.5, label="Actual")
+    ax.plot(val_idx, val_pred, color="gold", linewidth=2, label="Validation Prediction")
+    ax.plot(test_idx, test_pred, color="red", linewidth=2, label="Test Prediction")
+
+    # Mark all topics 0–12 with black circles and text labels
+    for topic_id in range(13):
+        col = f"topic_activity_{topic_id}"
+        topic_mask = df_plot[col].values == 1
+
+        ax.scatter(
+            x[topic_mask],
+            y_all[topic_mask],
+            s=90,
+            facecolors="none",
+            edgecolors="black",
+            linewidths=1.5
+        )
+
+        for xi, yi in zip(x[topic_mask], y_all[topic_mask]):
+            ax.annotate(
+                f"Topic {topic_id}",
+                xy=(xi, yi),
+                xytext=(5, 5),
+                textcoords="offset points",
+                fontsize=8,
+                color="black"
+            )
+
+    ax.axvline(len(y_val), linestyle="--", alpha=0.7)
+
+    ax.yaxis.set_major_formatter(ScalarFormatter())
+    ax.ticklabel_format(style="plain", axis="y")
+    ax.set_ylim(0, max(y_all.max(), pred_all.max()) * 1.1)
+
+    ax.set_xlabel("Sample Index")
+    ax.set_ylabel(target_name)
+    ax.set_title(f"Actual vs Predicted — {target_name} (Validation + Test)")
+
+
+
+    lines1, labels1 = ax.get_legend_handles_labels()
+    ax.legend(lines1 , labels1, loc="upper left")
+
+    plt.tight_layout()
+    plt.show()
