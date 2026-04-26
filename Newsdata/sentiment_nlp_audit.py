@@ -17,7 +17,6 @@ except Exception as exc:
     ) from exc
 
 
-DEFAULT_DATASET = Path(__file__).resolve().parents[1] / "data" / "trump_daily_features.csv"
 DEFAULT_GUARDIAN = Path(__file__).resolve().parent / "guardian_trump_articles.csv"
 DEFAULT_NYT = Path(__file__).resolve().parent / "nyt_trump_last_6_months.csv"
 DEFAULT_START_DATE = "2025-11-14"
