@@ -28,6 +28,10 @@ from sklearn.model_selection import ParameterGrid
 import shap
 from matplotlib.ticker import ScalarFormatter
 
+from matplotlib.ticker import ScalarFormatter
+import matplotlib.pyplot as plt
+from sklearn.metrics import r2_score
+import numpy as np
 
 
 def evaluate_model(name, model, X_train, Y_train, X_val, Y_val):
@@ -429,44 +433,47 @@ def encode_for_parallel_plot(df):
         df[col] = df[col].astype(str)
         mapping = {v: i for i, v in enumerate(sorted(df[col].unique()))}
         df[f"{col}_encoded"] = df[col].map(mapping)
-        print(col, mapping)
 
     return df
 
 
-def diagnose_predictions(y_true, y_pred):
-    y_true = np.ravel(y_true)
-    y_pred = np.ravel(y_pred)
-    residuals = y_true - y_pred
+def diagnose_predictions(y_true, y_pred, target_names=None):
+    y_true = pd.DataFrame(y_true)
+    y_pred = pd.DataFrame(y_pred)
 
-    fig, ax = plt.subplots(1, 4, figsize=(22, 6))
+    if target_names is None:
+        target_names = y_true.columns
 
-    ax[0].scatter(y_pred, residuals, alpha=0.6)
-    ax[0].axhline(0, linestyle="--")
-    ax[0].set_title("Residuals vs Predicted")
-    ax[0].set_xlabel("Predicted")
-    ax[0].set_ylabel("Residuals")
+    for i, target in enumerate(target_names):
+        yt = y_true.iloc[:, i].values
+        yp = y_pred.iloc[:, i].values
+        residuals = yt - yp
 
-    ax[1].hist(residuals, bins=30)
-    ax[1].set_title("Residual Distribution")
-    ax[1].set_xlabel("Residuals")
+        fig, ax = plt.subplots(1, 4, figsize=(22, 6))
 
-    stats.probplot(residuals, dist="norm", plot=ax[2])
-    ax[2].set_title("Q-Q Plot")
+        ax[0].scatter(yp, residuals, alpha=0.6)
+        ax[0].axhline(0, linestyle="--")
+        ax[0].set_title(f"{target}: Residuals vs Predicted")
+        ax[0].set_xlabel("Predicted")
+        ax[0].set_ylabel("Residuals")
 
-    ax[3].scatter(y_true, y_pred, alpha=0.6)
-    ax[3].plot([y_true.min(), y_true.max()], [y_true.min(), y_true.max()], "--")
-    ax[3].set_title(f"Actual vs Predicted\nR² = {r2_score(y_true, y_pred):.3f}")
-    ax[3].set_xlabel("Actual")
-    ax[3].set_ylabel("Predicted")
+        ax[1].hist(residuals, bins=30)
+        ax[1].set_title(f"{target}: Residual Distribution")
+        ax[1].set_xlabel("Residuals")
 
-    plt.tight_layout()
-    plt.show()
+        stats.probplot(residuals, dist="norm", plot=ax[2])
+        ax[2].set_title(f"{target}: Q-Q Plot")
 
-from matplotlib.ticker import ScalarFormatter
-import matplotlib.pyplot as plt
-from sklearn.metrics import r2_score
-import numpy as np
+        ax[3].scatter(yt, yp, alpha=0.6)
+        ax[3].plot([yt.min(), yt.max()], [yt.min(), yt.max()], "--")
+        ax[3].set_title(f"{target}: Actual vs Predicted\nR² = {r2_score(yt, yp):.3f}")
+        ax[3].set_xlabel("Actual")
+        ax[3].set_ylabel("Predicted")
+
+        plt.tight_layout()
+        plt.show()
+
+
 
 def plot_actual_vs_predicted(
     model,
