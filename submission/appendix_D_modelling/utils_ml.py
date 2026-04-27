@@ -537,6 +537,36 @@ def plot_actual_vs_predicted(
     plt.tight_layout()
     plt.show()
 
+def shap_local_waterfall(model, X, target_names, sample_indices=None):
+    """
+    Plot SHAP waterfall plots for individual observations (local explainability).
+
+    Shows how each feature pushes a specific prediction above or below the
+    base (mean training) value — one plot per observation per target.
+    """
+    if sample_indices is None:
+        n = len(X)
+        sample_indices = [0, n // 2, n - 1]
+
+    for i, target_name in enumerate(target_names):
+        if hasattr(model, "estimators_"):
+            rf = model.estimators_[i]
+        else:
+            rf = model
+
+        explainer = shap.TreeExplainer(rf)
+        shap_vals = explainer(X)
+
+        print("=" * 70)
+        print(f"Local SHAP Waterfall — {target_name}")
+        print("=" * 70)
+
+        for idx in sample_indices:
+            pred = rf.predict(X.iloc[[idx]])[0]
+            print(f"\nSample {idx}  |  Predicted {target_name}: {pred:,.0f}")
+            shap.plots.waterfall(shap_vals[idx], max_display=10, show=True)
+
+
 def plot_actual_vs_predicted_with_sentiment(
     model,
     X_val, Y_val,
