@@ -464,11 +464,7 @@ def diagnose_predictions(y_true, y_pred, target_names=None):
         stats.probplot(residuals, dist="norm", plot=ax[2])
         ax[2].set_title(f"{target}: Q-Q Plot")
 
-        ax[3].scatter(yt, yp, alpha=0.6)
-        ax[3].plot([yt.min(), yt.max()], [yt.min(), yt.max()], "--")
-        ax[3].set_xlabel("Actual")
-        ax[3].set_ylabel("Predicted")
-
+        
         ax[3].plot(yp, label="Predicted")
         ax[3].scatter(np.arange(len(yt)), yt, alpha=0.5, label="Actual")
         ax[3].set_title(f"{target}: Actual vs Predicted\nR² = {r2_score(yt, yp):.3f}")
