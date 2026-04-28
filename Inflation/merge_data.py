@@ -20,7 +20,7 @@ def load_macro_data(base_path):
         "sentiment": clean_fred(f"{base_path}/UMCSENT.csv", "consumer_sentiment"),
         "unemployment": clean_fred(f"{base_path}/UNRATE.csv", "unemployment"),
     }
-
+    
 
 def merge_macro_data(data):
     return (
@@ -164,7 +164,15 @@ def main():
     print(daily_df.shape)
     print(X_train_scaled.shape)
     print(X_test_scaled.shape)
-
+    
+    #print the amount of rows in each data set from fred
+    print("CPI rows:", macro_data["cpi"].shape[0])
+    print("Fed rows:", macro_data["fed"].shape[0])
+    print("Sentiment rows:", macro_data["sentiment"].shape[0])
+    print("Unemployment rows:", macro_data["unemployment"].shape[0])
+    
+    #print total rows 
+    print("Merged rows:", macro_df.shape[0])
 
 if __name__ == "__main__":
     main()
