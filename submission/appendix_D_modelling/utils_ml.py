@@ -378,7 +378,7 @@ def pdp_analysis_side_by_side(
 
         ax.set_title(f"PDP — {target_name}")
 
-    plt.tight_layout()
+    
     plt.show()
 
 def plot_rf_grid_results(grid_results_df, best_params, metric="r2", top_n=20):
